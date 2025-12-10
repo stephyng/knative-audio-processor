@@ -1,0 +1,1230 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Transform": "AWS::LanguageExtensions",
+    "Description": "Knative audio processing application",
+    "Metadata": {
+        "AWS::CloudFormation::Interface": {
+            "ParameterGroups": [
+                {
+                    "Label": { "default": "Neptun ID" },
+                    "Parameters": [ "NeptunId" ]
+                },
+                {
+                    "Label": { "default": "Initialization settings" },
+                    "Parameters": [ "Prefix", "InitParam" ]
+                },
+                {
+                    "Label": { "default": "Cluster settings" },
+                    "Parameters": [
+                        "K3sServerPermanentIp",
+                        "NumberOfAgents"
+                    ]
+                },
+                {
+                    "Label": { "default": "Instance settings for the Kubernetes server and agents" },
+                    "Parameters": [
+                        "AmiId",
+                        "K3sServerInstanceType",
+                        "K3sServerStorageSizeGiB",
+                        "K3sAgentInstanceType",
+                        "K3sAgentStorageSizeGiB"
+                    ]
+                },
+                {
+                    "Label": { "default": "Security group settings" },
+                    "Parameters": [
+                        "SecurityGroupIngressCidrIp",
+                        "SecurityGroupSshIngressCidrIp",
+                        "MyIp"
+                    ]
+                }
+            ],
+            "ParameterLabels": {
+                "AmiId": { "default": "AMI ID" },
+                "InitParam": { "default": "Supplementary initialization parameter" },
+                "K3sAgentInstanceType": { "default": "Agent(s): EC2 instance type of the Kubernetes agent" },
+                "K3sAgentStorageSizeGiB": { "default": "Agent(s): Storage size of the Kubernetes agent(s) in GiB" },
+                "K3sServerInstanceType": { "default": "Server: EC2 instance type of the Kubernetes server" },
+                "K3sServerPermanentIp": { "default": "Use a permanent IP address for the Kubernetes server" },
+                "K3sServerStorageSizeGiB": { "default": "Server: Storage size of the Kubernetes server in GiB" },
+                "MyIp": { "default": "My IPv4 address (used when selecting 'My IPv4' for one of the security group CIDR blocks above)"},
+                "NeptunId": { "default": "My Neptun ID" },
+                "NumberOfAgents": { "default": "Number of Kubernetes agents" },
+                "SecurityGroupIngressCidrIp": { "default": "Allow cluster ingress from this CIDR block" },
+                "SecurityGroupSshIngressCidrIp": { "default": "Allow SSH connection from this CIDR block" }
+            }
+        }
+    },
+    "Parameters": {
+        "AmiId": {
+            "Description": "The ID of the AMI to use for the EC2 instance(s). Generally you do not need to edit this. Deprecation time of the default 'ami-05e8c1b25f3096246' is 2027-09-18T11:13:15.000Z.",
+            "Default": "ami-05e8c1b25f3096246",
+            "Type": "String"
+        },
+        "InitParam": {
+            "Description": "Do not edit this.",
+            "Type": "String"
+        },
+        "K3sAgentInstanceType": {
+            "AllowedValues": [ "t2.medium", "t2.large", "t3.medium", "t3.large" ],
+            "Description": "The type to use for the EC2 instance(s) running the Kubernetes agent(s) (default: t3.medium). Available resources for each instance type can be found at: https://aws.amazon.com/ec2/instance-types/",
+            "Default": "t3.large",
+            "Type": "String"
+        },
+        "K3sAgentStorageSizeGiB": {
+            "Description": "Size of the storage of the Kubernetes agent instance(s). Should be between at least 8 and at most 20, default: 8.",
+            "ConstraintDescription": "The Kubernetes agent storage size should be between 8 and 20 GiB.",
+            "Default": 20,
+            "MinValue": 8,
+            "MaxValue": 20,
+            "Type": "Number"
+        },
+        "K3sServerInstanceType": {
+            "AllowedValues": [ "t2.medium", "t2.large", "t3.medium", "t3.large" ],
+            "Description": "The type to use for the EC2 instance running the Kubernetes server (default: t3.medium). Available resources for each instance type can be found at: https://aws.amazon.com/ec2/instance-types/",
+            "Default": "t3.large",
+            "Type": "String"
+        },
+        "K3sServerPermanentIp": {
+            "AllowedValues": [ "yes", "no" ],
+            "Description": "Create a permanent (elastic) IP address for the Kubernetes server.",
+            "Default": "no",
+            "Type": "String"
+        },
+        "K3sServerStorageSizeGiB": {
+            "Description": "Size of the storage of the Kubernetes server instance. Should be between at least 8 and at most 20, default: 8.",
+            "ConstraintDescription": "The Kubernetes server storage size should be between 8 and 20 GiB.",
+            "Default": 100,
+            "MinValue": 8,
+            "MaxValue": 100,
+            "Type": "Number"
+        },
+        "MyIp": {
+            "AllowedPattern": "^(([01]?\\d\\d?|2[0-4]\\d|25[0-5])\\.){3}([01]?\\d\\d?|2[0-4]\\d|25[0-5])/(\\d{1}|[0-2]\\d|3[0-2])$",
+            "ConstraintDescription": "Malformed IPv4: the parameter needs to be a valid IP address.",
+            "Type": "String",
+            "Description": "Your public IPv4 address. You need to set this only if you selected 'My IPv4' for at least one of the security group CIDR block settings. You can find out your IP address at https://whatismyipaddress.com/. If you specify your IPv4 address from the link, make sure to include a /32 netmask.",
+            "Default": "0.0.0.0/0"
+        },
+        "NeptunId": {
+            "AllowedPattern": "^[a-zA-Z0-9]{6}$",
+            "ConstraintDescription": "6 alphanumeric characters are accepted.",
+            "Description": "Your Neptun ID. You have to set this field.",
+            "MaxLength": 6,
+            "MinLength": 6,
+            "Type": "String"
+        },
+        "NumberOfAgents": {
+            "AllowedValues": [ "0", "1", "2" ],
+            "Description": "The number of Kubernetes agents to start (default: 0).",
+            "Default": "0",
+            "Type": "String"
+        },
+        "Prefix": {
+            "Type": "String",
+            "Description": "Prepended to names. Change the default value (vitmac12-k3smn) if you have already deployed a stack with the same prefix.",
+            "Default": "vitmac12-k3smn"
+        },
+        "SecurityGroupIngressCidrIp": {
+            "AllowedValues": [ "BME-IPv4--152.66.0.0-slash-16", "My-IPv4--fill-below", "Anywhere-IPv4--0.0.0.0-slash-0" ],
+            "Type": "String",
+            "Description": "Allows Kubernetes-related ingress traffic from this IP address range (default: BME -- 152.66.0.0/16). If you select 'My IPv4', you have to specify it in the 'My IPv4 address' field below.",
+            "Default": "BME-IPv4--152.66.0.0-slash-16"
+        },
+        "SecurityGroupSshIngressCidrIp": {
+            "AllowedValues": [ "BME-IPv4--152.66.0.0-slash-16", "My-IPv4--fill-below", "Anywhere-IPv4--0.0.0.0-slash-0" ],
+            "Type": "String",
+            "Description": "Allows SSH ingress traffic from this IP address range (default: Anywhere-IPv4 -- 0.0.0.0/0). Use this option if you intend to access the instance via EC2 Instance Connect (web terminal SSH session) or if you are outside of BME's network.",
+            "Default": "Anywhere-IPv4--0.0.0.0-slash-0"
+        }
+    },
+    "Conditions": {
+        "AddAgents": {
+            "Fn::Not": [{"Fn::Equals": [{"Ref": "NumberOfAgents"}, "0"]}]
+        },
+        "SecurityGroupIngressCidrIpMyIpUsed": {
+            "Fn::Equals": [{"Ref": "SecurityGroupIngressCidrIp"},
+                           "My-IPv4--fill-below"]
+        },
+        "SecurityGroupSshIngressCidrIpMyIpUsed": {
+            "Fn::Equals": [{"Ref": "SecurityGroupSshIngressCidrIp"},
+                           "My-IPv4--fill-below"]
+        },
+        "NotSecurityGroupIngressCidrIpMyIpUsed": {
+            "Fn::Not": [{"Fn::Equals": [{"Ref": "SecurityGroupIngressCidrIp"},
+                                        "My-IPv4--fill-below"]}]
+        },
+        "NotSecurityGroupSshIngressCidrIpMyIpUsed": {
+            "Fn::Not": [{"Fn::Equals": [{"Ref": "SecurityGroupSshIngressCidrIp"},
+                                        "My-IPv4--fill-below"]}]
+        },
+        "UseEipForK3sServer": {
+            "Fn::Equals": [
+                { "Ref": "K3sServerPermanentIp" },
+                "yes"
+            ]
+        }
+    },
+    "Mappings": {
+        "AgentNumbers": {
+            "0": {"AgentList": ""},
+            "1": {"AgentList": "1"},
+            "2": {"AgentList": "1,2"}
+        },
+        "SgCidrs": {
+            "BME-IPv4--152.66.0.0-slash-16": {"SgCidr": "152.66.0.0/16"},
+            "My-IPv4--fill-below": {"SgCidr": ""},
+            "Anywhere-IPv4--0.0.0.0-slash-0": {"SgCidr": "0.0.0.0/0"}
+        }
+    },
+    "Resources": {
+        "Bucket": {
+            "Type": "AWS::S3::Bucket",
+            "Properties": {
+                "BucketName": {
+                    "Fn::Join": [
+                        "-",
+                        [
+                            {"Fn::Select": [
+                                 "2",
+                                 {"Fn::Split": [
+                                      "/",
+                                      {"Ref": "AWS::StackId"}]}]},
+                            "tmit-bme-hu"
+                        ]
+                    ]
+                },
+                "Tags": [
+                    {
+                        "Key": "Task",
+                        "Value": "kubernetes"
+                    }
+                ]
+            }
+        },
+        "VPC": {
+            "Type": "AWS::EC2::VPC",
+            "Properties": {
+                "CidrBlock": "172.31.0.0/16",
+                "EnableDnsHostnames": true,
+                "EnableDnsSupport": true,
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [
+                                    { "Ref": "Prefix" },
+                                    "vpc"
+                                ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "Task",
+                        "Value": "kubernetes"
+                    }
+                ]
+            }
+        },
+        "InternetGateway": {
+            "Type": "AWS::EC2::InternetGateway",
+            "Properties": {
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [
+                                    { "Ref": "Prefix" },
+                                    "igw"
+                                ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "Task",
+                        "Value": "kubernetes"
+                    }
+                ]
+            }
+        },
+        "InternetGatewayAttachment": {
+            "Type": "AWS::EC2::VPCGatewayAttachment",
+            "Properties": {
+                "InternetGatewayId": {
+                    "Ref": "InternetGateway"
+                },
+                "VpcId": {
+                    "Ref": "VPC"
+                }
+            }
+        },
+        "K3sServerElasticIP": {
+            "Type": "AWS::EC2::EIP",
+            "Condition": "UseEipForK3sServer",
+            "Properties": {
+                "Domain": "vpc",
+                "InstanceId": { "Ref": "K3sServer" },
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [
+                                    { "Ref": "Prefix" },
+                                    "server-permanent-ip"
+                                ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "Task",
+                        "Value": "kubernetes"
+                    }
+                ]
+            },
+            "DependsOn": [ "InternetGatewayAttachment" ]
+        },
+        "PublicSubnet": {
+            "Type": "AWS::EC2::Subnet",
+            "Properties": {
+                "AvailabilityZone": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            { "Ref": "AWS::Region" },
+                            "a"
+                        ]
+                    ]
+                },
+                "CidrBlock": "172.31.0.0/20",
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "",
+                                [
+                                    { "Ref": "Prefix" },
+                                    "-subnet-public-",
+                                    { "Ref": "AWS::Region" },
+                                    "a"
+                                ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "Task",
+                        "Value": "kubernetes"
+                    }
+                ],
+                "VpcId": { "Ref": "VPC" }
+            }
+        },
+        "PublicRouteTable": {
+            "Type": "AWS::EC2::RouteTable",
+            "Properties": {
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [
+                                    { "Ref": "Prefix" },
+                                    "rtb-public"
+                                ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "Task",
+                        "Value": "kubernetes"
+                    }
+                ],
+                "VpcId": { "Ref": "VPC" }
+            }
+        },
+        "PublicRoute": {
+            "Type": "AWS::EC2::Route",
+            "Properties": {
+                "DestinationCidrBlock": "0.0.0.0/0",
+                "GatewayId": {
+                    "Ref": "InternetGateway"
+                },
+                "RouteTableId": {
+                    "Ref": "PublicRouteTable"
+                }
+            },
+            "DependsOn": [
+                "InternetGateway"
+            ]
+        },
+        "PublicSubnetRouteTableAssociation": {
+            "Type": "AWS::EC2::SubnetRouteTableAssociation",
+            "Properties": {
+                "RouteTableId": {
+                    "Ref": "PublicRouteTable"
+                },
+                "SubnetId": {
+                    "Ref": "PublicSubnet"
+                }
+            }
+        },
+        "PrivateSubnet": {
+            "Type": "AWS::EC2::Subnet",
+            "Condition": "AddAgents",
+            "Properties": {
+                "AvailabilityZone": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            { "Ref": "AWS::Region" },
+                            "a"
+                        ]
+                    ]
+                },
+                "CidrBlock": "172.31.128.0/20",
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "",
+                                [
+                                    { "Ref": "Prefix" },
+                                    "-subnet-private-",
+                                    { "Ref": "AWS::Region" },
+                                    "a"
+                                ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "Task",
+                        "Value": "kubernetes"
+                    }
+                ],
+                "VpcId": { "Ref": "VPC" }
+            }
+        },
+        "PrivateRouteTable": {
+            "Type": "AWS::EC2::RouteTable",
+            "Condition": "AddAgents",
+            "Properties": {
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "",
+                                [
+                                    { "Ref": "Prefix" },
+                                    "-rtb-private-",
+                                    { "Ref": "AWS::Region" },
+                                    "a"
+                                ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "Task",
+                        "Value": "kubernetes"
+                    }
+                ],
+                "VpcId": { "Ref": "VPC" }
+            }
+        },
+        "PrivateRoute": {
+            "Type": "AWS::EC2::Route",
+            "Condition": "AddAgents",
+            "Properties": {
+                "DestinationCidrBlock": "0.0.0.0/0",
+                "NatGatewayId": {
+                    "Ref": "NatGw"
+                },
+                "RouteTableId": {
+                    "Ref": "PrivateRouteTable"
+                }
+            }
+        },
+        "PrivateSubnetRouteTableAssociation": {
+            "Type": "AWS::EC2::SubnetRouteTableAssociation",
+            "Condition": "AddAgents",
+            "Properties": {
+                "RouteTableId": {
+                    "Ref": "PrivateRouteTable"
+                },
+                "SubnetId": {
+                    "Ref": "PrivateSubnet"
+                }
+            }
+        },
+        "NatGwElasticIp": {
+           "Type": "AWS::EC2::EIP",
+           "Condition": "AddAgents",
+           "Properties": {
+                  "Domain": "vpc",
+                  "NetworkBorderGroup": {
+                      "Ref": "AWS::Region"
+                  },
+                  "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [
+                                    { "Ref": "Prefix" },
+                                    "nat-gw-eip"
+                                ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "Task",
+                        "Value": "kubernetes"
+                    }
+                  ]
+              },
+             "DependsOn": [
+                "InternetGatewayAttachment"
+            ]
+        },
+        "NatGw": {
+            "Type": "AWS::EC2::NatGateway",
+            "Condition": "AddAgents",
+            "Properties": {
+                "AllocationId": { "Fn::GetAtt": ["NatGwElasticIp", "AllocationId"]},
+                "ConnectivityType": "public",
+                "SubnetId": { "Ref": "PublicSubnet" },
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [
+                                    { "Ref": "Prefix" },
+                                    "nat-gw"
+                                ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "Task",
+                        "Value": "kubernetes"
+                    }
+                ]
+           }
+        },
+        "SecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupName": {
+                    "Fn::Join": [
+                        "-",
+                        [
+                            { "Ref": "Prefix" },
+                            "security-group"
+                        ]
+                    ]
+                },
+                "GroupDescription": "Allows SSH, web and K3s-related traffic from SecurityGroupIngressCidrIp/SecurityGroupSshIngressCidrIp in and all traffic out. Also also all traffic type within the security group.",
+                "SecurityGroupEgress": [
+                    {
+                        "CidrIp": "0.0.0.0/0",
+                        "FromPort": -1,
+                        "IpProtocol": -1,
+                        "ToPort": -1
+                    }
+                ],
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [
+                                    { "Ref": "Prefix" },
+                                    "security-group"
+                                ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "Task",
+                        "Value": "kubernetes"
+                    }
+                ],
+                "VpcId": { "Ref": "VPC" }
+            }
+        },
+        "SecurityGroupInternalIngressRule": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Properties": {
+                "Description": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            "Allows traffic in from security group ",
+                            { "Ref": "SecurityGroup" },
+                            " created by the template."
+                        ]
+                    ]
+                },
+                "FromPort": -1,
+                "GroupId": {"Fn::GetAtt": ["SecurityGroup", "GroupId"]},
+                "IpProtocol": -1,
+                "SourceSecurityGroupId": {"Fn::GetAtt": ["SecurityGroup", "GroupId"]},
+                "ToPort": -1
+            }
+        },
+        "SecurityGroupIngressRulePort80MyIp": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Condition": "SecurityGroupIngressCidrIpMyIpUsed",
+            "Properties": {
+                "CidrIp": { "Ref": "MyIp" },
+                "Description": {
+                    "Fn::Join": [
+                        " ",
+                        [
+                            "Allow SSH traffic from My IPv4 address:",
+                            { "Ref": "MyIp" }
+                        ]
+                    ]
+                },
+                "GroupId": { "Fn::GetAtt": [ "SecurityGroup", "GroupId" ] },
+                "FromPort": 80,
+                "IpProtocol": "tcp",
+                "ToPort": 80
+            }
+        },
+        "SecurityGroupIngressRulePort80NotMyIp": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Condition": "NotSecurityGroupIngressCidrIpMyIpUsed",
+            "Properties": {
+                "CidrIp": {
+                    "Fn::FindInMap": [
+                        "SgCidrs",
+                        { "Ref": "SecurityGroupIngressCidrIp" },
+                        "SgCidr"
+                    ]
+                },
+                "Description": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            "Allow SSH traffic from ",
+                            { "Ref": "SecurityGroupIngressCidrIp" },
+                            ": ",
+                            {
+                                "Fn::FindInMap": [
+                                    "SgCidrs",
+                                    { "Ref": "SecurityGroupIngressCidrIp" },
+                                    "SgCidr"
+                                ]
+                            }
+                        ]
+                    ]
+                },
+                "GroupId": { "Fn::GetAtt": [ "SecurityGroup", "GroupId" ] },
+                "FromPort": 80,
+                "IpProtocol": "tcp",
+                "ToPort": 80
+            }
+        },
+        "SecurityGroupIngressRulePort88MyIp": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Condition": "SecurityGroupIngressCidrIpMyIpUsed",
+            "Properties": {
+                "CidrIp": { "Ref": "MyIp" },
+                "Description": {
+                    "Fn::Join": [
+                        " ",
+                        [
+                            "Allow SSH traffic from My IPv4 address:",
+                            { "Ref": "MyIp" }
+                        ]
+                    ]
+                },
+                "GroupId": { "Fn::GetAtt": [ "SecurityGroup", "GroupId" ] },
+                "FromPort": 88,
+                "IpProtocol": "tcp",
+                "ToPort": 88
+            }
+        },
+        "SecurityGroupIngressRulePort88NotMyIp": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Condition": "NotSecurityGroupIngressCidrIpMyIpUsed",
+            "Properties": {
+                "CidrIp": {
+                    "Fn::FindInMap": [
+                        "SgCidrs",
+                        { "Ref": "SecurityGroupIngressCidrIp" },
+                        "SgCidr"
+                    ]
+                },
+                "Description": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            "Allow SSH traffic from ",
+                            { "Ref": "SecurityGroupIngressCidrIp" },
+                            ": ",
+                            {
+                                "Fn::FindInMap": [
+                                    "SgCidrs",
+                                    { "Ref": "SecurityGroupIngressCidrIp" },
+                                    "SgCidr"
+                                ]
+                            }
+                        ]
+                    ]
+                },
+                "GroupId": { "Fn::GetAtt": [ "SecurityGroup", "GroupId" ] },
+                "FromPort": 88,
+                "IpProtocol": "tcp",
+                "ToPort": 88
+            }
+        },
+        "SecurityGroupIngressRulePort6443MyIp": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Condition": "SecurityGroupIngressCidrIpMyIpUsed",
+            "Properties": {
+                "CidrIp": { "Ref": "MyIp" },
+                "Description": {
+                    "Fn::Join": [
+                        " ",
+                        [
+                            "Allow SSH traffic from My IPv4 address:",
+                            { "Ref": "MyIp" }
+                        ]
+                    ]
+                },
+                "GroupId": { "Fn::GetAtt": [ "SecurityGroup", "GroupId" ] },
+                "FromPort": 6443,
+                "IpProtocol": "tcp",
+                "ToPort": 6443
+            }
+        },
+        "SecurityGroupIngressRulePort6443NotMyIp": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Condition": "NotSecurityGroupIngressCidrIpMyIpUsed",
+            "Properties": {
+                "CidrIp": {
+                    "Fn::FindInMap": [
+                        "SgCidrs",
+                        { "Ref": "SecurityGroupIngressCidrIp" },
+                        "SgCidr"
+                    ]
+                },
+                "Description": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            "Allow SSH traffic from ",
+                            { "Ref": "SecurityGroupIngressCidrIp" },
+                            ": ",
+                            {
+                                "Fn::FindInMap": [
+                                    "SgCidrs",
+                                    { "Ref": "SecurityGroupIngressCidrIp" },
+                                    "SgCidr"
+                                ]
+                            }
+                        ]
+                    ]
+                },
+                "GroupId": { "Fn::GetAtt": [ "SecurityGroup", "GroupId" ] },
+                "FromPort": 6443,
+                "IpProtocol": "tcp",
+                "ToPort": 6443
+            }
+        },
+        "SecurityGroupIngressRulePort30kMyIp": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Condition": "SecurityGroupIngressCidrIpMyIpUsed",
+            "Properties": {
+                "CidrIp": { "Ref": "MyIp" },
+                "Description": {
+                    "Fn::Join": [
+                        " ",
+                        [
+                            "Allow SSH traffic from My IPv4 address:",
+                            { "Ref": "MyIp" }
+                        ]
+                    ]
+                },
+                "GroupId": { "Fn::GetAtt": [ "SecurityGroup", "GroupId" ] },
+                "FromPort": 30000,
+                "IpProtocol": "tcp",
+                "ToPort": 32767
+            }
+        },
+        "SecurityGroupIngressRulePort30kNotMyIp": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Condition": "NotSecurityGroupIngressCidrIpMyIpUsed",
+            "Properties": {
+                "CidrIp": {
+                    "Fn::FindInMap": [
+                        "SgCidrs",
+                        { "Ref": "SecurityGroupIngressCidrIp" },
+                        "SgCidr"
+                    ]
+                },
+                "Description": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            "Allow SSH traffic from ",
+                            { "Ref": "SecurityGroupIngressCidrIp" },
+                            ": ",
+                            {
+                                "Fn::FindInMap": [
+                                    "SgCidrs",
+                                    { "Ref": "SecurityGroupIngressCidrIp" },
+                                    "SgCidr"
+                                ]
+                            }
+                        ]
+                    ]
+                },
+                "GroupId": { "Fn::GetAtt": [ "SecurityGroup", "GroupId" ] },
+                "FromPort": 30000,
+                "IpProtocol": "tcp",
+                "ToPort": 32767
+            }
+        },
+        "SecurityGroupIngressRuleSshMyIp": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Condition": "SecurityGroupSshIngressCidrIpMyIpUsed",
+            "Properties": {
+                "CidrIp": { "Ref": "MyIp" },
+                "Description": {
+                    "Fn::Join": [
+                        " ",
+                        [
+                            "Allow SSH traffic from My IPv4 address:",
+                            { "Ref": "MyIp" }
+                        ]
+                    ]
+                },
+                "FromPort": 22,
+                "GroupId": { "Fn::GetAtt": [ "SecurityGroup", "GroupId" ] },
+                "IpProtocol": "tcp",
+                "ToPort": 22
+            }
+        },
+        "SecurityGroupIngressRuleSshNotMyIp": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Condition": "NotSecurityGroupSshIngressCidrIpMyIpUsed",
+            "Properties": {
+                "CidrIp": {
+                    "Fn::FindInMap": [
+                        "SgCidrs",
+                        { "Ref": "SecurityGroupSshIngressCidrIp" },
+                        "SgCidr"
+                    ]
+                },
+                "Description": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            "Allow SSH traffic from ",
+                            { "Ref": "SecurityGroupSshIngressCidrIp" },
+                            ": ",
+                            {
+                                "Fn::FindInMap": [
+                                    "SgCidrs",
+                                    { "Ref": "SecurityGroupSshIngressCidrIp" },
+                                    "SgCidr"
+                                ]
+                            }
+                        ]
+                    ]
+                },
+                "FromPort": 22,
+                "GroupId": { "Fn::GetAtt": [ "SecurityGroup", "GroupId" ] },
+                "IpProtocol": "tcp",
+                "ToPort": 22
+            }
+        },
+        "K3sServer": {
+            "Type": "AWS::EC2::Instance",
+            "Properties": {
+               "AvailabilityZone": {
+                   "Fn::Join": [
+                       "",
+                       [
+                           { "Ref": "AWS::Region" },
+                           "a"
+                       ]
+                   ]
+               },
+               "BlockDeviceMappings": [
+                   {
+                       "DeviceName": "/dev/sda1",
+                       "Ebs": {
+                           "DeleteOnTermination": true,
+                           "Encrypted": false,
+                           "Iops": 3000,
+                           "VolumeSize": { "Ref": "K3sServerStorageSizeGiB" },
+                           "VolumeType": "gp3"
+                       }
+                   }
+               ],
+               "IamInstanceProfile": "LabInstanceProfile",
+               "ImageId": {
+                   "Ref": "AmiId"
+               },
+               "InstanceType": {
+                   "Ref": "K3sServerInstanceType"
+               },
+               "KeyName": "vockey",
+               "NetworkInterfaces": [
+                   {
+                       "AssociatePublicIpAddress": true,
+                       "DeleteOnTermination": true,
+                       "Description": "Primary interface of the instance",
+                       "DeviceIndex": "0",
+                       "GroupSet": [
+                           { "Ref": "SecurityGroup" }
+                       ],
+                       "SubnetId": {
+                           "Ref": "PublicSubnet"
+                       },
+                       "PrivateIpAddress": "172.31.2.21"
+                   }
+               ],
+               "SourceDestCheck": false,
+               "Tags": [
+                   {
+                       "Key": "Name",
+                       "Value": {
+                           "Fn::Join": [
+                               "-",
+                                [
+                                    { "Ref": "Prefix" },
+                                    "server"
+                                ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "Task",
+                        "Value": "kubernetes"
+                    }
+                ],
+                "UserData": {
+                    "Fn::Base64": {
+                         "Fn::Join": ["", [
+                              "#!/bin/bash\n",
+                              "hostnamectl set-hostname server\n",
+                              "sudo apt update && sudo apt install -y git\n",
+                              "curl -sfL https://get.k3s.io | sh -s - server --cluster-init --token '992GT3RS'\n",
+                              "cp /etc/rancher/k3s/k3s.yaml /home/ubuntu/kubeconfig.yaml\n",
+                              "chown ubuntu:ubuntu /home/ubuntu/kubeconfig.yaml\n",
+                              "sudo chmod 644 /etc/rancher/k3s/k3s.yaml\n",
+                              "wget https://get.pulumi.com/releases/sdk/pulumi-v3.206.0-linux-x64.tar.gz\n",
+                              "tar -xvf pulumi-v3.206.0-linux-x64.tar.gz\n",
+                              "sudo mv pulumi/* /usr/local/bin/\n",
+                              "sudo pulumi plugin install language python --non-interactive\n",
+                              "USER_NAME=\"ubuntu\"\n",
+                              "USER_HOME=\"/home/$USER_NAME\"\n",
+                              "echo \"export KUBECONFIG=/etc/rancher/k3s/k3s.yaml\" | sudo tee -a \"$USER_HOME/.bashrc\"\n",
+                              "echo \"export KUBECONFIG=/etc/rancher/k3s/k3s.yaml\" | sudo tee /etc/profile.d/k3s-kubeconfig.sh\n",
+                              "sudo apt install python3.12-venv -y\n",
+                              "kubectl apply -f https://github.com/knative/serving/releases/download/knative-v1.14.0/serving-crds.yaml\n",
+                              "kubectl apply -f https://github.com/knative/serving/releases/download/knative-v1.14.0/serving-core.yaml\n",
+                              "kubectl apply -f https://github.com/knative-extensions/net-kourier/releases/download/knative-v1.14.0/kourier.yaml\n",
+                              "kubectl patch configmap/config-network -n knative-serving --type merge -p '{\"data\":{\"ingress.class\":\"kourier.ingress.networking.knative.dev\"}}'\n",
+                              "kubectl patch configmap/config-domain -n knative-serving --type merge -p '{\"data\":{\"127.0.0.1.sslip.io\":\"\"}}'\n",
+                              "kubectl apply -f https://github.com/knative/eventing/releases/download/knative-v1.19.7/eventing-crds.yaml\n",
+                              "kubectl apply -f https://github.com/knative/eventing/releases/download/knative-v1.19.7/eventing-core.yaml\n",
+                              "kubectl apply -f https://github.com/knative/eventing/releases/download/knative-v1.19.7/in-memory-channel.yaml\n",
+                              "kubectl apply -f https://github.com/knative/eventing/releases/download/knative-v1.19.7/mt-channel-broker.yaml\n",
+                              "kubectl apply -f https://github.com/knative-extensions/eventing-kafka-broker/releases/download/knative-v1.19.8/eventing-kafka-controller.yaml\n",
+                              "kubectl apply -f https://github.com/knative-extensions/eventing-kafka-broker/releases/download/knative-v1.19.8/eventing-kafka-broker.yaml\n",
+                              "kubectl apply -f https://github.com/knative-extensions/eventing-kafka-broker/releases/download/knative-v1.19.8/eventing-kafka-post-install.yaml\n",
+                              "kubectl -n knative-serving patch cm config-features --type merge -p '{\"data\":{\"kubernetes.podspec-nodeselector\":\"enabled\"}}'\n",
+                              "cd /home/ubuntu\n",
+                              "git clone https://github.com/stephyng/knative-audio-processing.git\n",
+                              "sudo apt update && sudo apt install -y wget unzip mc\n",
+                              "sudo apt remove mc -y\n",
+                              "wget https://dl.min.io/client/mc/release/linux-amd64/mc -O mc\n",
+                              "sudo chmod +x mc\n",
+                              "sudo mv mc /usr/local/bin/\n",
+                              "sudo ln -s /usr/local/bin/mc /usr/bin/mc\n",
+                              "sudo chmod +x /home/ubuntu/knative-audio-processing/Auto-Deployment/Bash/Minio/minio-setup.sh\n",
+                              "sudo apt-get install htop\n"
+                ]]}}
+             },
+             "DependsOn": [
+                "Bucket",
+                "InternetGatewayAttachment"
+            ]
+        },
+        "K3sAgent": {
+            "Type": "AWS::EC2::Instance",
+            "Properties": {
+               "AvailabilityZone": {
+                   "Fn::Join": [
+                       "",
+                       [
+                           { "Ref": "AWS::Region" },
+                           "a"
+                       ]
+                   ]
+               },
+               "BlockDeviceMappings": [
+                   {
+                       "DeviceName": "/dev/sda1",
+                       "Ebs": {
+                           "DeleteOnTermination": true,
+                           "Encrypted": false,
+                           "Iops": 3000,
+                           "VolumeSize": { "Ref": "K3sServerStorageSizeGiB" },
+                           "VolumeType": "gp3"
+                       }
+                   }
+               ],
+               "IamInstanceProfile": "LabInstanceProfile",
+               "ImageId": {
+                   "Ref": "AmiId"
+               },
+               "InstanceType": {
+                   "Ref": "K3sServerInstanceType"
+               },
+               "KeyName": "vockey",
+               "NetworkInterfaces": [
+                   {
+                       "AssociatePublicIpAddress": true,
+                       "DeleteOnTermination": true,
+                       "Description": "Primary interface of the instance",
+                       "DeviceIndex": "0",
+                       "GroupSet": [
+                           { "Ref": "SecurityGroup" }
+                       ],
+                       "SubnetId": {
+                           "Ref": "PublicSubnet"
+                       }
+                   }
+               ],
+               "SourceDestCheck": false,
+               "Tags": [
+                   {
+                       "Key": "Name",
+                       "Value": {
+                           "Fn::Join": [
+                               "-",
+                                [
+                                    { "Ref": "Prefix" },
+                                    "server"
+                                ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "Task",
+                        "Value": "kubernetes"
+                    }
+                ],
+                "UserData": {
+                    "Fn::Base64": {
+                         "Fn::Join": ["", [
+                              "#!/bin/bash\n",
+                              "hostnamectl set-hostname agent\n",
+                              "sudo apt update && sudo apt install -y git\n",
+                              "curl -sfL https://get.k3s.io | K3S_URL=https://172.31.2.21:6443 K3S_TOKEN=992GT3RS sh -\n"
+                ]]}}
+             },
+             "DependsOn": [
+                "Bucket",
+                "InternetGatewayAttachment",
+                "K3sServer"
+            ]
+        },
+        "EmptyBucket": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+                "Code": {
+                    "ZipFile": {
+                        "Fn::Join": [
+                            "\n",
+                            [
+                                "import json, boto3, logging",
+                                "import cfnresponse",
+                                "logger = logging.getLogger()",
+                                "logger.setLevel(logging.INFO)",
+                                "",
+                                "def lambda_handler(event, context):",
+                                "    logger.info(f'event: {event}')",
+                                "    response_status = cfnresponse.FAILED",
+                                "    try:",
+                                "        bucket = event['ResourceProperties']['BucketName']",
+                                "        request_type = event['RequestType']",
+                                "        logger.info(f'bucket: {bucket}; request type: {request_type}')",
+                                "        if event['RequestType'] == 'Delete':",
+                                "            s3 = boto3.resource('s3')",
+                                "            bucket = s3.Bucket(bucket)",
+                                "            for obj in bucket.objects.filter():",
+                                "                logger.info(f'delete obj: {obj}')",
+                                "                s3.Object(bucket.name, obj.key).delete()",
+                                "        response_status = cfnresponse.SUCCESS",
+                                "    except Exception as e:",
+                                "        logger.info('Exception: {e}')",
+                                "    response_data = {'Data': {}}",
+                                "    cfnresponse.send(event, context, response_status,",
+                                "                     response_data, 'CustomResourcePhysicalID')"
+                            ]
+                        ]
+                    }
+                },
+                "Description": "Function used for emptying the bucket set up by CloudFormation.",
+                "FunctionName": {
+                    "Fn::Join": [
+                        "-",
+                        [
+                            { "Ref": "Prefix" },
+                            "empty-bucket"
+                        ]
+                    ]
+                },
+                "Handler": "index.lambda_handler",
+                "MemorySize": 256,
+                "PackageType": "Zip",
+                "RecursiveLoop": "Terminate",
+                "ReservedConcurrentExecutions": 1,
+                "Role": {
+                    "Fn::Sub": "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+                },
+                "Runtime": "python3.13",
+                "Tags": [
+                    {
+                        "Key": "Task",
+                        "Value": "kubernetes"
+                    }
+                ],
+                "Timeout": 30
+            }
+        },
+        "EmptyBucketOnStackDelete": {
+            "Type": "Custom::EmptyBucket",
+            "Properties": {
+                "ServiceToken": { "Fn::GetAtt" : [ "EmptyBucket", "Arn" ] },
+                "BucketName": { "Ref": "Bucket" },
+                "ServiceTimeout": 45
+            },
+            "DependsOn": [ "Bucket" ]
+        }
+    },
+    "Outputs": {
+        "EmptyS3Bucket": {
+            "Description": "Use this link to remove all items from the S3 bucket if the bucket is not emptied automatically.",
+            "Value": {
+                "Fn::Join": [
+                    "",
+                    [
+                        "https://",
+                        { "Ref": "AWS::Region" },
+                        ".console.aws.amazon.com/s3/bucket/",
+                        { "Ref": "Bucket" },
+                        "/empty?region=",
+                        { "Ref": "AWS::Region" }
+                    ]
+                ]
+            }
+        },
+        "K3sServerInstance": {
+            "Description": "Click the link to see the Kubernetes server instance in the EC2 console.",
+            "Value": {
+                "Fn::Join": [
+                    "",
+                    [
+                        "https://",
+                        { "Ref": "AWS::Region" },
+                        ".console.aws.amazon.com/ec2/home?region=",
+                        { "Ref": "AWS::Region" },
+                        "#Instances:instanceId=",
+                        { "Ref": "K3sServer" },
+                        ";v=3;$case=tags:true%5C,client:false;$regex=tags:false%5C,client:false"
+                    ]
+                ]
+            }
+        },
+        "K3sServerName": {
+            "Description": "Name of the K3s server instance.",
+            "Value": {
+                "Fn::Join": [ "-", [{ "Ref": "Prefix" }, "instance" ]]}
+        },
+        "K3sServerPublicDnsName": {
+            "Description": "Public DNS name of the Kubernetes server instance. If you did not opt to use a permanent (elastic) IP address for your Kubernetes server at the creation of the CloudFormation stack then this name is valid only until the first time the instance is stopped (upon restart EC2 will assign a different one).",
+            "Value": { "Fn::GetAtt": [ "K3sServer", "PublicDnsName" ]}
+        },
+        "K3sServerPublicIp": {
+            "Description": "Public IP address of the Kubernetes server instance. If you did not opt to use a permanent (elastic) IP address for your Kubernetes server at the creation of the CloudFormation stack then this address is valid only until the first time the instance is stopped (upon restart, EC2 will assign a different one).",
+            "Value": { "Fn::GetAtt": [ "K3sServer", "PublicIp" ]}
+        },
+        "0K3sServerSsh": {
+            "Description": "Click the link to access the Kubernetes server EC2 instance via EC2 Instance Connect (web terminal SSH session). Works if the SecurityGroupSshIngressCidrIp parameter is set appropriately. Select the 'Connect using EC2 Instance Connect' (it is selected by default) option then click the 'Connect' button.",
+            "Value": {
+                "Fn::Join": [
+                    "",
+                    [
+                        "https://",
+                        { "Ref": "AWS::Region" },
+                        ".console.aws.amazon.com/ec2/home?region=",
+                        { "Ref": "AWS::Region" },
+                        "#ConnectToInstance:instanceId=",
+                        { "Ref": "K3sServer" }
+                    ]
+                ]
+            }
+        },
+        "SecurityGroup": {
+            "Description": "Click the link to see the security group set up by CloudFormation. All instances of the Kubernetes cluster are attached to this security group.",
+            "Value": {
+                "Fn::Join": [
+                    "",
+                    [
+                        "https://",
+                        { "Ref": "AWS::Region" },
+                        ".console.aws.amazon.com/ec2/home?region=",
+                        { "Ref": "AWS::Region" },
+                        "#SecurityGroup:groupId=",
+                        { "Ref": "SecurityGroup" }
+                    ]
+                ]
+            }
+        },
+        "SecurityGroupName": {
+            "Description": "Name of the security group set up by CloudFormation.",
+            "Value": { "Fn::Join": [ "-", [{ "Ref": "Prefix" }, "security-group" ]]}
+        },
+        "Vpc": {
+            "Description": "Click the link to see the VPC set up by CloudFormation. All instances of the Kubernetes cluster are inside this VPC.",
+            "Value": {
+                "Fn::Join": [
+                    "",
+                    [
+                        "https://",
+                        { "Ref": "AWS::Region" },
+                        ".console.aws.amazon.com/vpcconsole/home?region=",
+                        { "Ref": "AWS::Region" },
+                        "#VpcDetails:VpcId=",
+                        { "Ref": "VPC" }
+                    ]
+                ]
+            }
+        },
+        "VpcName": {
+            "Description": "Name of the VPC set up by CloudFormation.",
+            "Value": { "Fn::Join": [ "-", [{ "Ref": "Prefix" }, "vpc" ]]}
+        }
+    }
+}

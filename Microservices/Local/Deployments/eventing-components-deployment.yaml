@@ -1,0 +1,56 @@
+apiVersion: eventing.knative.dev/v1
+kind: Broker
+metadata:
+  name: default
+  namespace: default
+
+---
+
+apiVersion: eventing.knative.dev/v1
+kind: Trigger
+metadata:
+  name: audio-splitter-trigger
+spec:
+  broker: default
+  filter:
+    attributes:
+      type: dev.knative.minio.object.created
+  subscriber:
+    ref:
+      apiVersion: serving.knative.dev/v1
+      kind: Service
+      name: knative-audio-splitter
+
+---
+
+apiVersion: eventing.knative.dev/v1
+kind: Trigger
+metadata:
+  name: audio-transcriber-trigger
+spec:
+  broker: default
+  filter:
+    attributes:
+      type: dev.knative.audio.chunks.ready
+  subscriber:
+    ref:
+      apiVersion: serving.knative.dev/v1
+      kind: Service
+      name: knative-audio-transcriber
+
+---
+
+apiVersion: eventing.knative.dev/v1
+kind: Trigger
+metadata:
+  name: audio-merger-trigger
+spec:
+  broker: default
+  filter:
+    attributes:
+      type: dev.knative.audio.chunk.processed
+  subscriber:
+    ref:
+      apiVersion: serving.knative.dev/v1
+      kind: Service
+      name: knative-audio-merger

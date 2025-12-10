@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: audio-processor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: audio-processor
+  template:
+    metadata:
+      labels:
+        app: audio-processor
+    spec:
+      containers:
+        - name: audio-processor
+          image: stephyng/knative-audio-processing-monolithic:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: MINIO_ENDPOINT
+              value: "minio.minio:9000"
+            - name: MINIO_ACCESS_KEY
+              value: "minioadmin"
+            - name: MINIO_SECRET_KEY
+              value: "minioadmin"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: audio-processor
+spec:
+  selector:
+    app: audio-processor
+  ports:
+    - port: 80
+      targetPort: 8080
+      protocol: TCP

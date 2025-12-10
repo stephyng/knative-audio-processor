@@ -1,0 +1,8 @@
+flask
+pydub
+openai-whisper
+ffmpeg-python
+torch
+tqdm
+numpy
+minio

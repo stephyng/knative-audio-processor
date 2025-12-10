@@ -1,0 +1,22 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: knative-minio-processor
+spec:
+  template:
+    metadata:
+        annotations:
+          autoscaling.knative.dev/minScale: "1"
+          autoscaling.knative.dev/maxScale: "1"
+    spec:
+      containers:
+      - image: stephyng/micro-minio-processor-test:latest
+        env:
+        - name: MINIOENDPOINT
+          value: "minio.minio:9000"
+        - name: MINIOACCESSKEY
+          value: "minioadmin"
+        - name: MINIOSECRETKEY
+          value: "minioadmin"
+        - name: K_SINK
+          value: "http://broker-ingress.knative-eventing.svc.cluster.local/default/default"
