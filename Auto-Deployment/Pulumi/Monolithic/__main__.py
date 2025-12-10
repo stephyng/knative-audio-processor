@@ -70,39 +70,66 @@ minio_service = k8s.core.v1.Service(
     }
 )
 
-# Knative Service - Audio Processor
-knative_service_audio_processor = k8s.apiextensions.CustomResource(
-    "knative-audio-processor",
-    api_version="serving.knative.dev/v1",
-    kind="Service",
+# Audio-processor Deployment
+audio_processor_deployment = k8s.apps.v1.Deployment(
+    "audio-processor-deployment",
     metadata={
-        "name": "knative-audio-processor"
+        "name": "audio-processor"
     },
     spec={
+        "replicas": 1,
+        "selector": {
+            "matchLabels": {
+                "app": "audio-processor"
+            }
+        },
         "template": {
             "metadata": {
-                "annotations": {
-                    "autoscaling.knative.dev/minScale": "1",
-                    "autoscaling.knative.dev/maxScale": "1"
+                "labels": {
+                    "app": "audio-processor"
                 }
             },
             "spec": {
                 "containers": [
                     {
+                        "name": "audio-processor",
                         "image": "stephyng/knative-audio-processing-monolithic:latest",
+                        "ports": [
+                            {"containerPort": 8080}
+                        ],
                         "env": [
-                            {"name": "MINIOENDPOINT", "value": "minio.minio:9000"},
-                            {"name": "MINIOACCESSKEY", "value": "minioadmin"},
-                            {"name": "MINIOSECRETKEY", "value": "minioadmin"},
-                            {"name": "K_SINK", "value": "http://broker-ingress.knative-eventing.svc.cluster.local/default/default"},
+                            {"name": "MINIO_ENDPOINT", "value": "minio.minio:9000"},
+                            {"name": "MINIO_ACCESS_KEY", "value": "minioadmin"},
+                            {"name": "MINIO_SECRET_KEY", "value": "minioadmin"}
                         ],
                     }
-                ],
+                ]
             }
         }
     }
 )
 
+# Audio-processor Service
+audio_processor_service = k8s.core.v1.Service(
+    "audio-processor-service",
+    metadata={
+        "name": "audio-processor"
+    },
+    spec={
+        "selector": {
+            "app": "audio-processor"
+        },
+        "ports": [
+            {
+                "port": 80,
+                "targetPort": 8080,
+                "protocol": "TCP"
+            }
+        ]
+    }
+)
+
 pulumi.export("minio_service_name", minio_service.metadata["name"])
 pulumi.export("namespace", minio_namespace.metadata["name"])
-pulumi.export("knative_service_name", knative_service_audio_processor.metadata["name"])
+pulumi.export("audio_processor_deployment_name", audio_processor_deployment.metadata["name"])
+pulumi.export("audio_processor_service_name", audio_processor_service.metadata["name"])
